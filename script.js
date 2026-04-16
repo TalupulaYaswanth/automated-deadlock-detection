@@ -2,6 +2,9 @@ let numResources = 0;
 let availableData = [];
 let processes = [];
 let nextProcessId = 0;
+let lastDetectionSteps = [];
+let liveAvailableResources = [];
+let deadlocked_procs = []; // Global for RAG sync
 
 function enterInterface() {
     const startup = document.querySelector('.startup-screen');
@@ -11,11 +14,10 @@ function enterInterface() {
     content.style.opacity = '1';
     content.style.pointerEvents = 'auto';
     document.body.style.backgroundImage = 
-        'radial-gradient(ellipse at center, rgba(3, 3, 8, 0.3) 0%, rgba(3, 3, 8, 0.95) 100%),' +
-        'url(\'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop\')';
+        'radial-gradient(ellipse at center, rgba(3, 3, 8, 0.4) 0%, rgba(3, 3, 8, 0.98) 100%),' +
+        'url(\'https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2564&auto=format&fit=crop\')';
         
-    const floatingBg = document.getElementById('floating-bg');
-    if(floatingBg) floatingBg.style.display = 'flex';
+
 }
 
 function defineResources() {
@@ -50,6 +52,14 @@ function saveAvailableResources() {
         availableData.push(parseInt(document.getElementById(`initial-avail-${j}`).value) || 0);
     }
     
+    // Initialize Live State: Total - current Allocations
+    liveAvailableResources = [...availableData];
+    processes.forEach(p => {
+        for(let j=0; j<numResources; j++) {
+            liveAvailableResources[j] -= p.allocation[j];
+        }
+    });
+
     // Smooth transition to Dashboard
     const setupSection = document.getElementById('resource-setup-section');
     setupSection.style.opacity = '0';
@@ -64,10 +74,11 @@ function saveAvailableResources() {
         let summaryStr = availableData.map((val, idx) => `R${idx}: ${val}`).join(' | ');
         document.getElementById('available-summary').innerText = `Total Avail: [ ${summaryStr} ]`;
         
-        // trigger reflow
         void dashboard.offsetWidth;
         dashboard.style.transition = 'opacity 0.6s ease';
         dashboard.style.opacity = '1';
+
+        syncBankerToRAG(); // Initial Graph Sync
     }, 300);
 }
 
@@ -124,21 +135,41 @@ function saveProcess() {
         allocation: alloc,
         request: req
     });
+
+    // Update live state: Subtract the allocation of the specifically added process
+    for(let j=0; j<numResources; j++) {
+        liveAvailableResources[j] -= alloc[j];
+    }
     
     renderProcesses();
     closeProcessModal();
     startDetection();
+    syncBankerToRAG();
 }
 
 function removeProcess(index) {
-    processes.splice(index, 1);
-    renderProcesses();
+    const p = processes[index];
+    if (p) {
+        // Release only allocation back
+        for(let j=0; j<numResources; j++) {
+            liveAvailableResources[j] += p.allocation[j];
+        }
+        processes.splice(index, 1);
+        renderProcesses();
+    }
     startDetection();
+    syncBankerToRAG();
 }
 
 function renderProcesses() {
     const list = document.getElementById('process-list');
     list.innerHTML = '';
+    
+    // Display Live State
+    let summaryStr = availableData.map((val, idx) => {
+        return `R${idx}: ${liveAvailableResources[idx]}/${val}`;
+    }).join(' | ');
+    document.getElementById('available-summary').innerText = `Capacity (Avail/Total): [ ${summaryStr} ]`;
     
     if (processes.length === 0) {
         list.style.display = 'block';
@@ -157,7 +188,10 @@ function renderProcesses() {
         card.innerHTML = `
             <div class="process-card-header">
                 <h3>Process P${p.id}</h3>
-                <button class="delete-process-btn" onclick="removeProcess(${index})" title="Remove Process">🗑️</button>
+                <div style="display: flex; gap: 8px;">
+                    <button class="primary-btn" onclick="completeProcess(${index})" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; background: var(--success); box-shadow: none;" title="Complete & Release">Complete ✅</button>
+                    <button class="delete-process-btn" onclick="removeProcess(${index})" title="Remove Process">🗑️</button>
+                </div>
             </div>
             <div class="vector-display">
                 <div class="vector-row">
@@ -196,6 +230,122 @@ function resetForm() {
     
     const resultSec = document.getElementById('result-section');
     resultSec.classList.remove('active', 'success', 'danger');
+    
+    deadlocked_procs = [];
+    syncBankerToRAG();
+}
+
+function completeProcess(index) {
+    const cards = document.querySelectorAll('.process-card');
+    const card = cards[index];
+    if (!card) return;
+    
+    card.classList.add('completing');
+    
+    // Animate the summary
+    const summary = document.getElementById('available-summary');
+    summary.classList.remove('pulse-success');
+    void summary.offsetWidth; // trigger reflow
+    summary.classList.add('pulse-success');
+    
+    const p = processes[index];
+    if (p) {
+        // OPTION B: Release both Allocation + Request
+        for(let j=0; j<numResources; j++) {
+            liveAvailableResources[j] += (p.allocation[j] + p.request[j]);
+        }
+    }
+    
+    setTimeout(() => {
+        processes.splice(index, 1);
+        renderProcesses();
+        // Clear result as system state changed
+        document.getElementById('result-section').classList.remove('active');
+        syncBankerToRAG();
+    }, 600);
+}
+
+let currentSimStep = 0;
+let isSimulating = false;
+
+async function executeSafeSequence() {
+    if (lastDetectionSteps.length === 0) return;
+    
+    // Close the results section during simulation
+    document.getElementById('result-section').classList.remove('active');
+    
+    // Iterate through the safe sequence recorded in lastDetectionSteps
+    for (const step of lastDetectionSteps) {
+        const pIndex = processes.findIndex(p => p.id === step.processId);
+        if (pIndex !== -1) {
+            completeProcess(pIndex);
+            // Wait for completion animation + extra beat
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+}
+
+function startManualSimulation() {
+    if (lastDetectionSteps.length === 0) return;
+    
+    currentSimStep = 0;
+    isSimulating = true;
+    
+    // Close results
+    document.getElementById('result-section').classList.remove('active');
+    
+    // Show controller
+    const controller = document.getElementById('sim-controller');
+    controller.classList.add('active');
+    
+    updateSimulationUI();
+}
+
+function updateSimulationUI() {
+    if (currentSimStep >= lastDetectionSteps.length) {
+        stopSimulation();
+        return;
+    }
+    
+    const step = lastDetectionSteps[currentSimStep];
+    const stepText = document.getElementById('sim-step-text');
+    stepText.innerText = `Process P${step.processId} (${currentSimStep + 1} of ${lastDetectionSteps.length})`;
+    
+    // Highlight the process card
+    document.querySelectorAll('.process-card').forEach(c => c.classList.remove('sim-highlight'));
+    const pIndex = processes.findIndex(p => p.id === step.processId);
+    if (pIndex !== -1) {
+        const cards = document.querySelectorAll('.process-card');
+        if (cards[pIndex]) {
+            cards[pIndex].classList.add('sim-highlight');
+            cards[pIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+}
+
+function advanceSimulation() {
+    if (!isSimulating || currentSimStep >= lastDetectionSteps.length) return;
+    
+    const step = lastDetectionSteps[currentSimStep];
+    const pIndex = processes.findIndex(p => p.id === step.processId);
+    
+    if (pIndex !== -1) {
+        completeProcess(pIndex);
+        currentSimStep++;
+        
+        if (currentSimStep < lastDetectionSteps.length) {
+            setTimeout(updateSimulationUI, 700);
+        } else {
+            setTimeout(stopSimulation, 700);
+        }
+    }
+}
+
+function stopSimulation() {
+    isSimulating = false;
+    currentSimStep = 0;
+    document.getElementById('sim-controller').classList.remove('active');
+    document.querySelectorAll('.process-card').forEach(c => c.classList.remove('sim-highlight'));
 }
 
 let isDetecting = false;
@@ -217,33 +367,56 @@ async function startDetection() {
         request[i] = [...processes[i].request];
     }
     
-    // Make a copy of available data so we don't mutate the display state if user runs multiple times
-    let work = [...availableData];
+    // Initial Work is now the Live Available State
+    let work = [...liveAvailableResources];
     
-    // Visual processing state
+    // Get button reference early (needed for both error and success paths)
     const btn = document.getElementById('submit-btn');
     const originalText = btn.innerText;
+    
+    // Validation: Check if system is over-allocated (Available < 0)
+    let overAllocated = [];
+    for(let j=0; j<numResources; j++) {
+        if (work[j] < 0) overAllocated.push(`R${j}`);
+    }
+    
+    if (overAllocated.length > 0) {
+        displayOverAllocationError(overAllocated, work, availableData);
+        btn.innerText = originalText;
+        btn.style.opacity = '1';
+        btn.disabled = false;
+        isDetecting = false;
+        return;
+    }
+    
+    // Visual processing state
     btn.innerText = 'Analyzing Data...';
     btn.style.opacity = '0.7';
     btn.disabled = true;
     
     // Tiny artificial delay to mimic heavy calculation and play the beautiful button animation
     await new Promise(r => setTimeout(r, 600));
-
+    
+    lastDetectionSteps = [];
+    let logicTrace = [];
+    logicTrace.push({ type: 'info', msg: `Initialized with System Total: [${availableData.join(', ')}]` });
+    logicTrace.push({ type: 'info', msg: `Current Available (Total - Sum of Alloc): [${work.join(', ')}]` });
+    
+    let currentWorkSteps = [ [...work] ];
     // NORMAL JS FRONTEND LOGIC (Translated exactly from the C++)
     
     let finish = new Array(numP).fill(false);
     
-    // A process is "finished" if it has no resources allocated and requests nothing
+    // Algorithm 4 Initialization: Process is finished if it holds 0 resources
     for(let i = 0; i < numP; i++) {
-        let has_allocation_or_request = false;
+        let is_holding = false;
         for(let j = 0; j < numResources; j++) {
-            if(allocation[i][j] > 0 || request[i][j] > 0) {
-                has_allocation_or_request = true;
-                break;
-            }
+            if(allocation[i][j] > 0) is_holding = true;
         }
-        if(!has_allocation_or_request) finish[i] = true;
+        if(!is_holding) {
+            finish[i] = true;
+            logicTrace.push({ type: 'success', msg: `Process P${processes[i].id} is not holding any resources. Marking as finished.` });
+        }
     }
     
     // Main Detection Loop
@@ -252,34 +425,57 @@ async function startDetection() {
         found = false;
         for(let i = 0; i < numP; i++) {
             if(!finish[i]) {
+                logicTrace.push({ type: 'info', msg: `Checking Process P${processes[i].id}: Request [${request[i].join(', ')}] vs Available [${work.join(', ')}]` });
+                
                 let can_be_satisfied = true;
                 for(let j = 0; j < numResources; j++) {
                     if(request[i][j] > work[j]) {
                         can_be_satisfied = false;
+                        logicTrace.push({ type: 'error', msg: `  -> P${processes[i].id} blocked on Resource R${j}.` });
                         break;
                     }
                 }
                 
                 if(can_be_satisfied) {
+                    let snapshotBefore = [...work];
+                    logicTrace.push({ type: 'success', msg: `  -> P${processes[i].id} Request [${request[i].join(', ')}] can be satisfied by Available [${work.join(', ')}].` });
+                    
+                    // Standard Algorithm Step 3: Work = Work + Allocation[i]
+                    // Process finishes and releases ONLY its held (allocated) resources
                     for(let j = 0; j < numResources; j++) {
                         work[j] += allocation[i][j];
                     }
                     finish[i] = true;
                     found = true;
+                    
+                    logicTrace.push({ type: 'release', msg: `  -> RELEASING: Allocation [${allocation[i].join(', ')}] returned to system (Work = Work + Allocation)` });
+                    logicTrace.push({ type: 'info', msg: `  -> New System Available: [${work.join(', ')}]` });
+                    
+                    lastDetectionSteps.push({
+                        processId: processes[i].id,
+                        workBefore: snapshotBefore,
+                        allocation: [...allocation[i]],
+                        request: [...request[i]],
+                        workAfter: [...work]
+                    });
                 }
             }
         }
     } while(found);
     
     // Final Report
-    let deadlocked_procs = [];
+    deadlocked_procs = [];
     for(let i = 0; i < numP; i++) {
-        if(!finish[i]) deadlocked_procs.push(processes[i].id);
+        if(!finish[i]) {
+            deadlocked_procs.push(processes[i].id);
+            logicTrace.push({ type: 'error', msg: `PROCESS P${processes[i].id} IS DEADLOCKED.` });
+        }
     }
 
     const data = {
         is_deadlocked: deadlocked_procs.length > 0,
-        deadlocked_procs: deadlocked_procs
+        deadlocked_procs: deadlocked_procs,
+        logicTrace: logicTrace
     };
 
     // Re-enable button
@@ -290,6 +486,40 @@ async function startDetection() {
     // Display
     displayResult(data);
     isDetecting = false;
+    syncBankerToRAG();
+}
+
+function displayOverAllocationError(overAllocated, work, totals) {
+    const resultSec = document.getElementById('result-section');
+    const resultIcon = document.getElementById('result-icon');
+    const resultTitle = document.getElementById('result-title');
+    const resultDesc = document.getElementById('result-desc');
+    
+    resultSec.className = 'result-container danger active';
+    resultIcon.innerText = '❌';
+    resultTitle.innerText = 'OVER-ALLOCATION ERROR';
+    
+    deadlocked_procs = []; // reset
+    syncBankerToRAG();
+    
+    let details = overAllocated.map(resId => {
+        const idx = parseInt(resId.substring(1));
+        const total = totals[idx];
+        const allocated = total - work[idx];
+        return `<li><strong>${resId}:</strong> Allocated ${allocated} but Total is only ${total}.</li>`;
+    }).join('');
+    
+    resultDesc.innerHTML = `
+        <p>The system cannot exist in this state because more resources have been allocated than are physically available.</p>
+        <ul style="text-align: left; margin: 1rem 0; color: #fecaca; line-height: 1.6;">
+            ${details}
+        </ul>
+        <p>Please remove or edit processes to fit within system capacity.</p>
+    `;
+    
+    setTimeout(() => {
+        resultSec.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, 100);
 }
 
 function displayResult(data) {
@@ -304,26 +534,70 @@ function displayResult(data) {
     // Force a reflow for animation restart
     void resultSec.offsetWidth; 
     
+    // Generate Sequence Summary
+    let sequenceHtml = '';
+    if (lastDetectionSteps.length > 0) {
+        const orderNodes = lastDetectionSteps.map(s => `<span class="sequence-node">P${s.processId}</span>`).join('<span class="sequence-arrow">➔</span>');
+        sequenceHtml = `
+            <div class="sequence-container">
+                <div class="sequence-label">Execution Order (Safe Sequence)</div>
+                <div class="sequence-flow">
+                    ${orderNodes}
+                    ${data.is_deadlocked ? '<span class="sequence-arrow">➔</span><span class="sequence-node dead">STUCK ❌</span>' : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    let traceHtml = `
+        ${sequenceHtml}
+        <div class="trace-log-container">
+            <div class="trace-log-header">
+                <h5>Step-by-Step Logic Trace</h5>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">Algorithm v4.0 (Resource Release Simulation)</span>
+            </div>
+            <div class="trace-log-body">
+                ${data.logicTrace.map(line => `<div class="trace-line ${line.type}">${line.msg}</div>`).join('')}
+            </div>
+        </div>
+    `;
+    
     if (data.is_deadlocked) {
         resultSec.classList.add('active', 'danger');
         resultIcon.innerText = '⚠️';
         resultTitle.innerText = 'DEADLOCK DETECTED';
         
         const procs = data.deadlocked_procs.map(p => `<strong style="color:var(--danger)">P${p}</strong>`).join(', ');
-        resultDesc.innerHTML = `Critical Stop: Processes ${procs} are involved in a circular wait and cannot proceed.
-        <div style="margin-top: 1.5rem; padding: 1.5rem; background: rgba(220, 38, 38, 0.1); border-left: 4px solid var(--danger); border-radius: 8px; text-align: left;">
-            <strong style="color: var(--danger); font-size: 1.1rem; display: block; margin-bottom: 0.8rem;">💡 Suggestions to Resolve Deadlock:</strong>
-            <ul style="margin: 0; padding-left: 1.5rem; line-height: 1.6; color: #f8fafc;">
-                <li><strong>Process Termination:</strong> Abort one or more deadlocked processes (e.g., P${data.deadlocked_procs.join(', P')}) to break the circular wait.</li>
-                <li><strong>Resource Preemption:</strong> Forcefully reclaim allocated resources from lower-priority deadlocked processes.</li>
-                <li><strong>State Rollback:</strong> Roll back the system to the last known safe checkpoint before the deadlock occurred.</li>
-            </ul>
-        </div>`;
+        resultDesc.innerHTML = `
+            Critical Stop: The system reached a deadlock. Processes ${procs} are stuck and cannot proceed.
+            <div style="margin-top: 1.5rem; padding: 1.5rem; background: rgba(220, 38, 38, 0.1); border-left: 4px solid var(--danger); border-radius: 8px; text-align: left;">
+                <strong style="color: var(--danger); font-size: 1.1rem; display: block; margin-bottom: 0.8rem;">💡 Suggestions to Resolve Deadlock:</strong>
+                <ul style="margin: 0; padding-left: 1.5rem; line-height: 1.6; color: #f8fafc;">
+                    <li><strong>Process Termination:</strong> Abort deadlocked processes to break the cycle.</li>
+                    <li><strong>Resource Preemption:</strong> Reclaim allocated resources from holding processes.</li>
+                </ul>
+            </div>
+            ${traceHtml}
+        `;
     } else {
         resultSec.classList.add('active', 'success');
         resultIcon.innerText = '✅';
         resultTitle.innerText = 'SYSTEM IS SAFE';
-        resultDesc.innerText = 'All processes have a valid execution sequence. No deadlocks will occur in the current state.';
+        resultDesc.innerHTML = `
+            <p>All processes have a valid execution sequence. Resources are released correctly at each step.</p>
+            <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 1.5rem; flex-wrap: wrap;">
+                <button onclick="toggleFlowModal(true)" class="primary-btn" style="background: var(--primary-gradient); font-size: 0.9rem; padding: 0.6rem 1.2rem;">
+                    Show Execution Flow ✨
+                </button>
+                <button onclick="executeSafeSequence()" class="primary-btn" style="background: linear-gradient(135deg, #10b981, #059669); font-size: 0.9rem; padding: 0.6rem 1.2rem;">
+                    Execute All 🚀
+                </button>
+                <button onclick="startManualSimulation()" class="primary-btn" style="background: linear-gradient(135deg, #f59e0b, #d97706); font-size: 0.9rem; padding: 0.6rem 1.2rem;">
+                    Step-by-Step Simulation 🖱️
+                </button>
+            </div>
+            ${traceHtml}
+        `;
     }
     
     // Scroll to reveal result smoothly
@@ -412,6 +686,67 @@ function initParticles() {
     }
     
     animate();
+}
+
+function toggleFlowModal(show) {
+    const modal = document.getElementById('execution-flow-modal');
+    if (show) {
+        renderExecutionFlow();
+        modal.style.display = 'flex';
+        setTimeout(() => modal.classList.add('active'), 10);
+    } else {
+        modal.classList.remove('active');
+        setTimeout(() => modal.style.display = 'none', 300);
+    }
+}
+
+function renderExecutionFlow() {
+    const container = document.getElementById('flow-timeline');
+    container.innerHTML = '';
+    
+    if (lastDetectionSteps.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 2rem;">No processes could be satisfied in the current state.</div>';
+        return;
+    }
+    
+    lastDetectionSteps.forEach((step, index) => {
+        const stepCard = document.createElement('div');
+        stepCard.className = 'flow-step-card';
+        stepCard.style.animationDelay = `${index * 0.1}s`;
+        
+        const beforeStr = step.workBefore.join(', ');
+        const allocStr = step.allocation.join(', ');
+        const reqStr = step.request.join(', ');
+        const afterStr = step.workAfter.join(', ');
+        
+        stepCard.innerHTML = `
+            <div class="flow-step-number">${index + 1}</div>
+            <div class="flow-step-content">
+                <div class="flow-step-header">
+                    <h4>Process P${step.processId} Completed</h4>
+                </div>
+                <div class="flow-step-details">
+                    <div class="flow-detail-item">
+                        <span class="detail-label">Initial Available</span>
+                        <span class="detail-value">[ ${beforeStr} ]</span>
+                    </div>
+                    <div class="flow-detail-item" style="color: #818cf8; background: rgba(99, 102, 241, 0.05); border-radius: 6px; padding: 4px 8px;">
+                        <span class="detail-label" style="color: #818cf8;">Request Needed</span>
+                        <span class="detail-value">[ ${step.request.join(', ')} ]</span>
+                    </div>
+                    <div class="flow-detail-item" style="color: var(--success); background: rgba(16, 185, 129, 0.05); border-radius: 6px; padding: 4px 8px;">
+                        <span class="detail-label" style="color: var(--success);">+ Released (Allocation)</span>
+                        <span class="detail-value">[ ${step.allocation.join(', ')} ]</span>
+                    </div>
+                    <div class="flow-detail-item" style="border-top: 1px dashed rgba(255,255,255,0.1); margin-top: 5px; padding-top: 5px;">
+                        <span class="detail-label">Final System Available</span>
+                        <span class="detail-value" style="color: #a855f7;">[ ${afterStr} ]</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(stepCard);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
