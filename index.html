@@ -50,8 +50,8 @@
             <button id="tab-banker" class="algo-tab active" role="tab" aria-selected="true"
                 onclick="switchTab('banker')" style="width: 100%; pointer-events: none;">
                 <span class="tab-icon">🏛️</span>
-                <span class="tab-label">Deadlock Detection Control Center</span>
-                <span class="tab-sub">Interactive Banker's Algorithm & System Graph</span>
+                <span class="tab-label">System Control Dashboard</span>
+                <span class="tab-sub">Interactive Detection & Graph Engine</span>
             </button>
         </div>
 
@@ -176,83 +176,6 @@
         // ── Tab switching fallback ─────────────────────────────
         function switchTab(mode) {
              // Banker is default and only now
-        }
-    </script>
-</body>
-</html>
-    </div>
-
-    <!-- Add Process Modal (Banker) -->
-    <div id="add-process-modal" class="image-modal" style="cursor: default;">
-        <div class="modal-card" style="background: rgba(15, 23, 42, 0.98); border: 1px solid rgba(168,85,247,0.3); border-radius: 24px; padding: 2.5rem; width: min(600px, 90%); max-height: 90vh; overflow-y: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.6); position: relative;">
-            <button class="modal-close-btn" aria-label="Close modal" onclick="closeProcessModal()" style="top: 1rem; right: 1rem; width: 40px; height: 40px; font-size: 2rem;">×</button>
-            <h2 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: #f8fafc; font-size: 1.8rem; text-align: center; margin-bottom: 2rem;">Assign Resources</h2>
-            <div id="process-modal-inputs" style="display: flex; flex-direction: column; gap: 2rem;">
-                <!-- Dynamically filled -->
-            </div>
-            <button class="primary-btn" onclick="saveProcess()" style="width: 100%; margin-top: 2.5rem; padding: 1rem;">Save Process ✅</button>
-        </div>
-    </div>
-
-    <!-- Image Modal -->
-    <div id="image-modal" class="image-modal" onclick="closeModal()">
-        <button class="modal-close-btn" aria-label="Close modal">×</button>
-        <img id="modal-img" src="" alt="Expanded Image">
-    </div>
-
-    <!-- Execution Flow Modal (Banker) -->
-    <div id="execution-flow-modal" class="image-modal" style="cursor: default;">
-        <div class="modal-card" style="background: rgba(8, 11, 25, 0.98); border: 1px solid rgba(168,85,247,0.3); border-radius: 24px; padding: 2.5rem; width: min(800px, 95%); max-height: 90vh; overflow-y: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.6); position: relative;">
-            <button class="modal-close-btn" aria-label="Close modal" onclick="toggleFlowModal(false)" style="top: 1rem; right: 1rem; width: 40px; height: 40px; font-size: 2rem;">×</button>
-            <h2 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: #f8fafc; font-size: 2rem; text-align: center; margin-bottom: 0.5rem;">Process Execution Flow</h2>
-            <p style="text-align: center; color: var(--text-muted); margin-bottom: 2rem;">Timeline of satisfying process requests and releasing resources.</p>
-
-            <div id="flow-timeline" style="flex: 1; overflow-y: auto; padding-right: 10px; padding-bottom: 20px;">
-                <!-- Flow cards populated here -->
-            </div>
-        </div>
-    </div>
-
-    <!-- Step-by-Step Simulation Controller (Banker) -->
-    <div id="sim-controller" class="step-controller">
-        <div class="step-info">
-            <span class="label">Step-by-Step Flow</span>
-            <span id="sim-step-text" class="value">Process P0 (1 of 3)</span>
-        </div>
-        <div class="step-controls">
-            <button onclick="advanceSimulation()" class="sim-btn next">Satisfy &amp; Release ⚡</button>
-            <button onclick="stopSimulation()" class="sim-btn stop">Stop Simulation</button>
-        </div>
-    </div>
-
-    <script src="script.js"></script>
-    <script src="wait-for-graph.js"></script>
-    <script>
-        // ── Tab switching ──────────────────────────────────────
-        function switchTab(mode) {
-            const tabs   = document.querySelectorAll('.algo-tab');
-            const panels = document.querySelectorAll('.algo-panel');
-            tabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
-            panels.forEach(p => p.style.display = 'none');
-
-            document.getElementById(`tab-${mode}`).classList.add('active');
-            document.getElementById(`tab-${mode}`).setAttribute('aria-selected', 'true');
-            document.getElementById(`panel-${mode}`).style.display = 'block';
-
-            if (mode === 'wfg') {
-                // Give canvas a moment to have dimensions, then init if first visit
-                setTimeout(() => {
-                    const canvas = document.getElementById('wfg-canvas');
-                    if (!canvas) return;
-                    // canvas.width defaults to 300 (not 0), so use a data flag for first-visit detection
-                    if (!canvas.dataset.wfgReady) {
-                        canvas.dataset.wfgReady = '1';
-                        wfgInit();
-                    } else if (!ragAnimFrame) {
-                        wfgStartCanvas();
-                    }
-                }, 100);
-            }
         }
     </script>
 </body>
