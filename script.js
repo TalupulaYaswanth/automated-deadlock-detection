@@ -4,7 +4,9 @@ let processes = [];
 let nextProcessId = 0;
 let lastDetectionSteps = [];
 let liveAvailableResources = [];
-let deadlocked_procs = []; // Global for RAG sync
+let deadlocked_procs = []; 
+let isLiveModeEnabled = true; // NEW: Controls the auto-advance feature
+let isAutoSatisfying = false; // Prevents race conditions during sequences
 
 function enterInterface() {
     const startup = document.querySelector('.startup-screen');
@@ -79,6 +81,7 @@ function saveAvailableResources() {
         dashboard.style.opacity = '1';
 
         syncBankerToRAG(); // Initial Graph Sync
+        if(isLiveModeEnabled) checkAndAutoSatisfy();
     }, 300);
 }
 
@@ -145,6 +148,7 @@ function saveProcess() {
     closeProcessModal();
     startDetection();
     syncBankerToRAG();
+    if(isLiveModeEnabled) checkAndAutoSatisfy();
 }
 
 function removeProcess(index) {
@@ -159,6 +163,7 @@ function removeProcess(index) {
     }
     startDetection();
     syncBankerToRAG();
+    if(isLiveModeEnabled) checkAndAutoSatisfy();
 }
 
 function renderProcesses() {
@@ -233,6 +238,7 @@ function resetForm() {
     
     deadlocked_procs = [];
     syncBankerToRAG();
+    if(isLiveModeEnabled) checkAndAutoSatisfy();
 }
 
 function completeProcess(index) {
@@ -250,9 +256,10 @@ function completeProcess(index) {
     
     const p = processes[index];
     if (p) {
-        // OPTION B: Release both Allocation + Request
+        // Corrected: Only release held (allocated) resources. 
+        // Requests were never deducted from live state, so they shouldn't be added back.
         for(let j=0; j<numResources; j++) {
-            liveAvailableResources[j] += (p.allocation[j] + p.request[j]);
+            liveAvailableResources[j] += p.allocation[j];
         }
     }
     
@@ -262,7 +269,59 @@ function completeProcess(index) {
         // Clear result as system state changed
         document.getElementById('result-section').classList.remove('active');
         syncBankerToRAG();
-    }, 600);
+        
+        isAutoSatisfying = false;
+        // Check for chain reaction
+        if(isLiveModeEnabled) checkAndAutoSatisfy();
+    }, 500); 
+}
+
+function checkAndAutoSatisfy() {
+    if (!isLiveModeEnabled || isAutoSatisfying || processes.length === 0 || isSimulating) return;
+
+    // Standard Banker's check: Can any process's request be met by current available?
+    const pIdx = processes.findIndex(p => {
+        for(let j=0; j<numResources; j++) {
+            if (p.request[j] > liveAvailableResources[j]) return false;
+        }
+        return true;
+    });
+
+    if (pIdx !== -1) {
+        isAutoSatisfying = true;
+        
+        // Visual indicator on card
+        const cards = document.querySelectorAll('.process-card');
+        if (cards[pIdx]) {
+            cards[pIdx].classList.add('auto-triggering');
+            const btn = cards[pIdx].querySelector('.primary-btn');
+            if(btn) btn.innerText = "Satisfying... ⏳";
+        }
+
+        setTimeout(() => {
+            // Re-verify before final execution
+            if (processes[pIdx]) {
+                const stillReady = processes[pIdx].request.every((val, j) => val <= liveAvailableResources[j]);
+                if (stillReady) {
+                    completeProcess(pIdx);
+                } else {
+                    isAutoSatisfying = false;
+                }
+            } else {
+                isAutoSatisfying = false;
+            }
+        }, 1500); // 1.5s as requested
+    }
+}
+
+function toggleLiveMode() {
+    isLiveModeEnabled = !isLiveModeEnabled;
+    const btn = document.getElementById('live-mode-toggle');
+    if (btn) {
+        btn.classList.toggle('active', isLiveModeEnabled);
+        btn.innerHTML = isLiveModeEnabled ? "Live Automation: ON 🔥" : "Live Automation: OFF ❄️";
+    }
+    if (isLiveModeEnabled) checkAndAutoSatisfy();
 }
 
 let currentSimStep = 0;
@@ -566,6 +625,9 @@ function displayResult(data) {
         resultSec.classList.add('active', 'danger');
         resultIcon.innerText = '⚠️';
         resultTitle.innerText = 'DEADLOCK DETECTED';
+        
+        // Premium Popo (Modal) trigger
+        showDeadlockRemediation(data.deadlocked_procs);
         
         const procs = data.deadlocked_procs.map(p => `<strong style="color:var(--danger)">P${p}</strong>`).join(', ');
         resultDesc.innerHTML = `
@@ -897,4 +959,149 @@ function initTextParticles() {
     }
     
     animate();
+}
+
+function shareSystem() {
+    const shareData = {
+        title: 'Automated Deadlock Detection',
+        text: 'Check out this interactive OS Deadlock Detection tool involving Banker\'s Algorithm and Resource Allocation Graphs!',
+        url: 'https://talupulayaswanth.github.io/automated-deadlock-detection/'
+    };
+
+    if (navigator.share) {
+        navigator.share(shareData)
+            .then(() => showToast('Shared successfully! ✨'))
+            .catch((err) => {
+                if (err.name !== 'AbortError') {
+                    copyToClipboard(shareData.url);
+                }
+            });
+    } else {
+        copyToClipboard(shareData.url);
+    }
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Link copied to clipboard! 📋');
+    }).catch(err => {
+        console.error('Could not copy text: ', err);
+        // Fallback for older browsers or insecure contexts
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            showToast('Link copied to clipboard! 📋');
+        } catch (err) {
+            console.error('Fallback copy failed', err);
+        }
+        document.body.removeChild(textArea);
+    });
+}
+
+function showToast(message) {
+    // Check if toast container exists, if not create it
+    let toast = document.getElementById('toast-notification');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        document.body.appendChild(toast);
+    }
+    
+    toast.innerText = message;
+    toast.className = 'toast show';
+    
+    setTimeout(() => {
+        toast.className = toast.className.replace('show', '');
+    }, 3000);
+}
+
+// --- Deadlock Remediation Logic ---
+function showDeadlockRemediation(deadlockedProcs) {
+    const modal = document.getElementById('deadlock-remediation-modal');
+    const pNamesEl = document.getElementById('deadlocked-p-names');
+    
+    // Convert IDs to P# labels and sort for consistent UI
+    const sortedProcs = [...deadlockedProcs].sort((a, b) => a - b);
+    pNamesEl.innerText = sortedProcs.map(p => "P" + p).join(', ');
+    
+    modal.style.display = 'flex';
+    setTimeout(() => {
+        modal.classList.add('active');
+    }, 20);
+}
+
+function closeRemediationModal() {
+    const modal = document.getElementById('deadlock-remediation-modal');
+    modal.classList.remove('active');
+    setTimeout(() => {
+        modal.style.display = 'none';
+    }, 300);
+}
+
+function remedyTerminateDeadlocked() {
+    if (deadlocked_procs.length === 0) {
+        closeRemediationModal();
+        return;
+    }
+
+    // Process from largest to smallest index to avoid splice shifts issues 
+    // OR just filter the global processes array directly.
+    
+    // We filter out processes in deadlocked_procs and return their held resources
+    deadlocked_procs.forEach(deadId => {
+        const pIdx = processes.findIndex(p => p.id === deadId);
+        if (pIdx !== -1) {
+            const p = processes[pIdx];
+            // Release held (allocated) resources
+            for (let j = 0; j < numResources; j++) {
+                liveAvailableResources[j] += p.allocation[j];
+            }
+            processes.splice(pIdx, 1);
+        }
+    });
+
+    renderProcesses();
+    closeRemediationModal();
+    
+    // Clear previous result section
+    document.getElementById('result-section').classList.remove('active');
+    
+    syncBankerToRAG();
+    
+    if (isLiveModeEnabled) checkAndAutoSatisfy();
+}
+
+function remedyResetSystem() {
+    closeRemediationModal();
+    resetForm();
+}
+
+function goBack() {
+    const dashboard = document.getElementById('dashboard-section');
+    const setup = document.getElementById('resource-setup-section');
+    const startup = document.querySelector('.startup-screen');
+    const content = document.querySelector('.content');
+
+    if (dashboard.style.display === 'flex') {
+        // From Dashboard to Setup
+        dashboard.style.transition = 'opacity 0.3s ease';
+        dashboard.style.opacity = '0';
+        setTimeout(() => {
+            dashboard.style.display = 'none';
+            setup.style.display = 'flex';
+            setup.style.opacity = '1';
+        }, 300);
+    } else if (setup.style.display === 'flex') {
+        // From Setup to Startup
+        content.style.opacity = '0';
+        setTimeout(() => {
+            startup.classList.remove('hidden');
+            content.style.pointerEvents = 'none';
+            // Optional: reset state when going fully back
+            resetForm();
+        }, 300);
+    }
 }
