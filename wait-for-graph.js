@@ -283,6 +283,15 @@ function ragShowResult(deadlockIndices, derived) {
     } else {
         const names  = deadlockIndices.map(i => `<strong style="color:var(--danger)">${ragProcesses[i].label}</strong>`).join(', ');
         sec.classList.add('active', 'danger');
+        
+        // Premium Popo trigger
+        if (typeof showDeadlockRemediation === 'function') {
+            const bankerIds = deadlockIndices.map(i => {
+                return ragProcesses[i].bankerId !== undefined ? ragProcesses[i].bankerId : i;
+            });
+            showDeadlockRemediation(bankerIds);
+        }
+
         icon.innerText  = '🔴';
         title.innerText = 'DEADLOCK DETECTED';
         desc.innerHTML  = `
