@@ -15,6 +15,7 @@
     <!-- Top Navigation Bar -->
     <nav class="top-nav">
         <div class="nav-left">
+            <button onclick="goBack()" class="nav-back-btn" title="Go Back">←</button>
             <img src="https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&q=80&w=150" alt="Logo" class="nav-logo-img" onclick="openModal(this.src)">
             <span class="nav-brand">Automated Deadlock Detection</span>
         </div>
@@ -22,7 +23,7 @@
             System State Analysis Workspace
         </div>
         <div class="nav-right">
-            <span class="nav-icon" style="font-size: 1rem; opacity: 0.8; cursor: pointer; letter-spacing: 0.05em; font-weight: 600;">Share</span>
+            <span class="nav-icon" onclick="shareSystem()" style="font-size: 1rem; opacity: 0.8; cursor: pointer; letter-spacing: 0.05em; font-weight: 600;">Share</span>
             <span class="nav-icon" style="font-size: 1.5rem; opacity: 0.8; cursor: pointer; margin-left: 0.5rem; margin-right: 0.5rem;">⋮</span>
             <img src="https://images.unsplash.com/photo-1462331940025-496dfbfc7564?auto=format&fit=crop&q=80&w=150" alt="Avatar" class="nav-profile-img" onclick="openModal(this.src)">
         </div>
@@ -84,7 +85,10 @@
                             <h2 style="margin: 0; font-family: 'Outfit'; font-size: 1.8rem; color: #c084fc;">Process Dashboard</h2>
                             <div id="available-summary" style="color: var(--text-muted); font-size: 1rem; margin-top: 0.5rem; font-family: monospace;"></div>
                         </div>
-                        <button onclick="openProcessModal()" class="primary-btn" style="padding: 0.6rem 1.2rem; font-size: 0.95rem;">➕ Add Process</button>
+                        <div style="display: flex; gap: 1rem;">
+                            <button id="live-mode-toggle" onclick="toggleLiveMode()" class="secondary-btn active" style="padding: 0.6rem 1.2rem; font-size: 0.85rem; border-color: rgba(99,102,241,0.4); background: rgba(99,102,241,0.1);">Live Automation: ON 🔥</button>
+                            <button onclick="openProcessModal()" class="primary-btn" style="padding: 0.6rem 1.2rem; font-size: 0.95rem;">➕ Add Process</button>
+                        </div>
                     </div>
 
                     <div id="process-list" class="process-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; min-height: 150px;">
@@ -154,6 +158,29 @@
 
             <div id="flow-timeline" style="flex: 1; overflow-y: auto; padding-right: 10px; padding-bottom: 20px;">
                 <!-- Flow cards populated here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Deadlock Remediation Modal -->
+    <div id="deadlock-remediation-modal" class="image-modal" style="cursor: default;">
+        <div class="modal-card remediation-card" style="background: rgba(15, 23, 42, 0.98); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 24px; padding: 2.5rem; width: min(500px, 90%); box-shadow: 0 30px 80px rgba(0,0,0,0.8); position: relative; text-align: center;">
+            <button class="modal-close-btn" aria-label="Close modal" onclick="closeRemediationModal()" style="top: 1rem; right: 1rem; width: 40px; height: 40px; font-size: 2rem;">×</button>
+            <div class="remediation-icon pulse-danger" style="font-size: 5rem; margin-bottom: 1rem;">⚠️</div>
+            <h2 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: #ef4444; font-size: 2.2rem; margin-bottom: 0.5rem; text-shadow: 0 0 20px rgba(239, 68, 68, 0.3);">System Deadlock!</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 1.1rem;">The system has reached a critical state where processes are permanently stuck.</p>
+            
+            <div id="deadlocked-list-ui" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px; padding: 1.25rem; margin-bottom: 2rem; box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);">
+                <span style="display: block; font-size: 0.8rem; color: #fca5a5; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; font-weight: 700;">Affected Processes</span>
+                <div id="deadlocked-p-names" style="font-family: 'Outfit', monospace; font-size: 1.5rem; color: #f87171; font-weight: 800; letter-spacing: 0.05em;"></div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <button class="primary-btn" onclick="remedyTerminateDeadlocked()" style="background: linear-gradient(135deg, #ef4444, #b91c1c); width: 100%; padding: 1.2rem; font-size: 1.1rem; box-shadow: 0 10px 25px rgba(239, 68, 68, 0.4);">Terminate Stuck Processes 🗑️</button>
+                <button class="secondary-btn" onclick="remedyResetSystem()" style="width: 100%; padding: 1rem; border-color: rgba(255,255,255,0.1); font-size: 1rem; background: rgba(255,255,255,0.03);">Full System Reset ↺</button>
+            </div>
+            <div style="margin-top: 1.5rem; font-size: 0.75rem; color: #64748b; font-weight: 500;">
+                All allocated resources will be returned to the system upon termination.
             </div>
         </div>
     </div>
